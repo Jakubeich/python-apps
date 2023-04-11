@@ -3,26 +3,17 @@ import pygame_gui
 import math
 import sys
 import os
+import numpy as np
 from pygame_gui.elements import UILabel
 from pygame import transform, Surface
+
+#start_time = datetime.datetime.now()
 
 # Physical constants
 G = 6.67430e-11  # gravitational constant
 M_SUN = 1.98892e30  # mass of the sun
 M_EARTH = 5.9742e24  # mass of Earth
 R_EARTH = 6371e3  # radius of Earth
-
-# Constants for planet colors
-COLOR_MERCURY = (255, 0, 0)
-COLOR_EARTH = (0, 0, 255)
-COLOR_MARS = (255, 255, 0)
-COLOR_VENUS = (255, 153, 51)
-
-#COLOR_VENUS = (255, 153, 51)
-#COLOR_JUPITER = (204, 102, 0)
-#COLOR_SATURN = (204, 153, 102)
-#COLOR_URANUS = (51, 153, 255)
-#COLOR_NEPTUNE = (51, 102, 255)
 
 # Scaling factors
 SCALE_FACTOR = 1e9
@@ -87,6 +78,12 @@ def crop_image_to_circle(image, radius):
     pygame.draw.circle(cropped_image, (255, 255, 255), (radius, radius), radius)
     cropped_image.blit(image, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
     return cropped_image
+
+#def update_simulation_time(t):
+#    global start_time
+#    elapsed_time = datetime.timedelta(seconds=t)
+#    simulation_time = start_time + elapsed_time
+#    return simulation_time.strftime("%Y/%m/%d/%H/%M/%S")
 
 class Body:
     def __init__(self, name, m, r, a, e, i, O, o, theta):
@@ -176,6 +173,9 @@ class Body:
     def draw_orbits(self, screen):
         pygame.draw.ellipse(screen, (255, 255, 255), (int(-self.a / SCALE_FACTOR) + 400, int(-self.b / SCALE_FACTOR) + 300, int(2 * self.a / SCALE_FACTOR), int(2 * self.b / SCALE_FACTOR)), 1)
         
+    def distance_to_earth(self, earth):
+        return np.sqrt((self.x - earth.x)**2 + (self.y - earth.y)**2 + (self.z - earth.z)**2)
+        
 def main():
     global TIME_STEP
     pygame.init()
@@ -189,10 +189,17 @@ def main():
     slider_label = UILabel(relative_rect=pygame.Rect((50, 35), (200, 20)), text="Planet Speed Slider", manager=ui_manager)
     slider_min_label = UILabel(relative_rect=pygame.Rect((30, 10), (20, 20)), text="1", manager=ui_manager) 
     slider_max_label = UILabel(relative_rect=pygame.Rect((250, 10), (20, 20)), text="10", manager=ui_manager)
+    #time_label = UILabel(relative_rect=pygame.Rect((20, 80), (200, 20)), text="", manager=ui_manager)
+
+    distance_labels = []
 
     bodies = []
     for body in planet_init:
-        bodies.append(Body(body, planet_init[body]["m"], planet_init[body]["r"], planet_init[body]["a"], planet_init[body]["e"], planet_init[body]["i"], planet_init[body]["O"], planet_init[body]["o"], planet_init[body]["theta"]))
+        new_body = Body(body, planet_init[body]["m"], planet_init[body]["r"], planet_init[body]["a"], planet_init[body]["e"], planet_init[body]["i"], planet_init[body]["O"], planet_init[body]["o"], planet_init[body]["theta"])
+        bodies.append(new_body)
+        if new_body.name != "Earth":
+            label = UILabel(relative_rect=pygame.Rect((580, 10 + 20 * len(distance_labels)), (200, 20)), text="", manager=ui_manager)  # Change the position of the labels to the top right corner
+            distance_labels.append((new_body, label))
     t = 0
     while True:
         for event in pygame.event.get():
@@ -208,11 +215,17 @@ def main():
             ui_manager.process_events(event)
 
         screen.fill((0, 0, 0))
+        
+        earth = next(body for body in bodies if body.name == "Earth")
+        for body, label in distance_labels:
+            distance = body.distance_to_earth(earth)
+            label.set_text(f"Distance to {body.name}: {distance/1000:.0f} km")
 
         for body in bodies:
             body.compute(t, bodies)
             body.draw_orbits(screen)
             body.draw_bodies(screen)
+            #time_label.set_text(update_simulation_time(t))
         
         ui_manager.update(clock.tick(60))
         ui_manager.draw_ui(screen)
