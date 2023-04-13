@@ -4,6 +4,7 @@ import math
 import sys
 import os
 import numpy as np
+import random
 from pygame_gui.elements import UILabel
 from pygame import transform, Surface
 
@@ -73,11 +74,57 @@ planet_init = {
     }
 }
 
+# set initial zoom level
+zoom_level = 1
+
 def crop_image_to_circle(image, radius):
     cropped_image = Surface((radius * 2, radius * 2), pygame.SRCALPHA)
     pygame.draw.circle(cropped_image, (255, 255, 255), (radius, radius), radius)
     cropped_image.blit(image, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
     return cropped_image
+
+def generate_star_positions(num_stars, screen_width, screen_height):
+    star_positions = []
+    for _ in range(num_stars):
+        x = random.randint(0, screen_width)
+        y = random.randint(0, screen_height)
+        star_positions.append((x, y))
+    return star_positions
+
+def draw_stars(screen, star_positions, star_color=(255, 255, 255)):
+    for pos in star_positions:
+        pygame.draw.circle(screen, star_color, pos, 1)
+        
+def move_camera(event, camera_position, sun_position):
+    move_speed = 10000000000 # adjust this value to change the speed of the camera movement
+    if event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_LEFT:
+            camera_position[0] += move_speed
+            sun_position[0] += move_speed
+        elif event.key == pygame.K_RIGHT:
+            camera_position[0] -= move_speed
+            sun_position[0] -= move_speed
+        elif event.key == pygame.K_UP:
+            camera_position[1] += move_speed
+            sun_position[1] += move_speed
+        elif event.key == pygame.K_DOWN:
+            camera_position[1] -= move_speed
+            sun_position[1] -= move_speed
+    return camera_position, sun_position
+
+def draw_sun(screen, zoom_level, sun_position):
+    sun_image_path = os.path.join("images", "sun.png")
+    sun_image = pygame.image.load(sun_image_path)
+
+    sun_radius = int(20 * zoom_level)
+    sun_image = transform.scale(sun_image, (sun_radius * 2, sun_radius * 2))
+    sun_image = crop_image_to_circle(sun_image, sun_radius)
+
+    # vzcentruj slunce doprostred orbit i pri zoomu
+    sun_x = max(0, min(screen.get_width() - sun_radius * 2, sun_position[0] - sun_radius))
+    sun_y = max(0, min(screen.get_height() - sun_radius * 2, sun_position[1] - sun_radius))
+
+    screen.blit(sun_image, (sun_x, sun_y))
 
 #def update_simulation_time(t):
 #    global start_time
@@ -154,33 +201,37 @@ class Body:
             self.z += self.vz * t
             self.theta += math.sqrt(G * M_SUN / self.a**3) * t
             
-    def draw_bodies(self, screen):
+    def draw_bodies(self, screen, zoom_level, camera_position):
         planet_image_path = os.path.join("images", f"{self.name.lower()}.png")
         planet_image = pygame.image.load(planet_image_path)
 
         # Scale the image based on the radius of the planet
-        image_scale = int(5000 * self.r / SCALE_FACTOR)
+        image_scale = int(5000 * self.r * zoom_level / SCALE_FACTOR)
         scaled_image = transform.scale(planet_image, (image_scale, image_scale))
 
         # Crop the image to a circle using a mask
         cropped_image = crop_image_to_circle(scaled_image, image_scale // 2)
 
-        image_x = int(self.x / SCALE_FACTOR) + 400 - image_scale // 2
-        image_y = int(self.y / SCALE_FACTOR) + 300 - image_scale // 2
+        image_x = int(((self.x - camera_position[0]) * zoom_level) / SCALE_FACTOR) + 400 - image_scale // 2
+        image_y = int(((self.y - camera_position[1]) * zoom_level) / SCALE_FACTOR) + 300 - image_scale // 2
 
         screen.blit(cropped_image, (image_x, image_y))
 
-    def draw_orbits(self, screen):
-        pygame.draw.ellipse(screen, (255, 255, 255), (int(-self.a / SCALE_FACTOR) + 400, int(-self.b / SCALE_FACTOR) + 300, int(2 * self.a / SCALE_FACTOR), int(2 * self.b / SCALE_FACTOR)), 1)
+    def draw_orbits(self, screen, zoom_level, camera_position):
+        pygame.draw.ellipse(screen, (255, 255, 255), (int(((-self.a - camera_position[0]) * zoom_level) / SCALE_FACTOR) + 400, int(((-self.b - camera_position[1]) * zoom_level) / SCALE_FACTOR) + 300, int((2 * self.a * zoom_level) / SCALE_FACTOR), int((2 * self.b * zoom_level) / SCALE_FACTOR)), 1)
         
     def distance_to_earth(self, earth):
         return np.sqrt((self.x - earth.x)**2 + (self.y - earth.y)**2 + (self.z - earth.z)**2)
         
 def main():
     global TIME_STEP
+    global zoom_level
+    camera_position = [0, 0] # x, y
+    sun_position = [400, 300] # x, y
+    
     pygame.init()
     screen = pygame.display.set_mode((800, 600))
-    pygame.display.set_caption("Solar system")
+    pygame.display.set_caption("Solar system simulator")
     clock = pygame.time.Clock()
 
     # Set up the user interface manager and slider
@@ -190,6 +241,8 @@ def main():
     slider_min_label = UILabel(relative_rect=pygame.Rect((30, 10), (20, 20)), text="1", manager=ui_manager) 
     slider_max_label = UILabel(relative_rect=pygame.Rect((250, 10), (20, 20)), text="10", manager=ui_manager)
     #time_label = UILabel(relative_rect=pygame.Rect((20, 80), (200, 20)), text="", manager=ui_manager)
+    
+    star_positions = generate_star_positions(100, 800, 600)
 
     distance_labels = []
 
@@ -210,29 +263,55 @@ def main():
             if event.type == pygame.USEREVENT:
                 if event.user_type == pygame_gui.UI_HORIZONTAL_SLIDER_MOVED:
                     if event.ui_element == rotation_speed_slider:
-                        TIME_STEP = 1 / rotation_speed_slider.get_current_value()
+                        TIME_STEP = 0.5 / rotation_speed_slider.get_current_value()
 
-            ui_manager.process_events(event)
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 4:  # Mouse wheel up
+                if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                    zoom_level *= 1.1
+            elif event.button == 5:  # Mouse wheel down
+                if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                    zoom_level /= 1.1
+                    
+        if event.type == pygame.MOUSEWHEEL:
+            zoom_change = event.y
+            zoom_level += zoom_change * 1e-2
+            if zoom_level < 1e-1:
+                zoom_level = 1e-1
+            elif zoom_level > 10e1:
+                zoom_level = 10e1
+
+        camera_position, sun_position = move_camera(event, camera_position, sun_position)
+        ui_manager.process_events(event)
+
+        ui_manager.update(1 / 60.0)
 
         screen.fill((0, 0, 0))
-        
-        earth = next(body for body in bodies if body.name == "Earth")
-        for body, label in distance_labels:
-            distance = body.distance_to_earth(earth)
-            label.set_text(f"Distance to {body.name}: {distance/1000:.0f} km")
+        draw_stars(screen, star_positions)
 
         for body in bodies:
             body.compute(t, bodies)
-            body.draw_orbits(screen)
-            body.draw_bodies(screen)
-            #time_label.set_text(update_simulation_time(t))
-        
-        ui_manager.update(clock.tick(60))
-        ui_manager.draw_ui(screen)
-        
-        pygame.display.update()
-        t += TIME_STEP
-        pygame.time.delay(20)
 
+        earth = next(body for body in bodies if body.name == "Earth")
+
+        for body, label in distance_labels:
+            distance = body.distance_to_earth(earth)
+            label.set_text(f"{body.name}: {distance / 1000:.0f} km")
+
+        for body in bodies:
+            body.draw_orbits(screen, zoom_level, camera_position)
+
+        draw_sun(screen, zoom_level, sun_position)
+
+        for body in bodies:
+            body.draw_bodies(screen, zoom_level, camera_position)
+
+        t += TIME_STEP
+
+        ui_manager.draw_ui(screen)
+
+        pygame.display.flip()
+        clock.tick(60)
+        
 if __name__ == "__main__":
     main()
