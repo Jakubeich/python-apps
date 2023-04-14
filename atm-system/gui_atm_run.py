@@ -86,6 +86,10 @@ class BankAccountApp:
             )
         """)
         self.conn.commit()
+        
+        self.faces_folder = "faces/"
+        self.login_faces_folder = "login_faces/"
+        self.login_face_path = "login_faces/login_face.jpg"
     
     ### functions for showing widgets ###
             
@@ -116,14 +120,17 @@ class BankAccountApp:
 
     def show_dashboard(self, account):
         self.clear_widgets()
+    
+        print("account tuple:", account)
 
         self.user_id = account[0]
         self.balance = account[2]
+        self.account_number = account[1]  # Store account_number as an attribute
 
         # zustatek na učtě
         self.balance_label = tk.Label(self.root, text="Zůstatek: {} Kč".format(self.balance))
         self.balance_label.pack()
-        
+
         # zobrazit detaily uživatele
         self.user_details_button = tk.Button(self.root, text="Detaily uživatele", command=self.show_user_details)
         self.user_details_button.pack()
@@ -205,18 +212,15 @@ class BankAccountApp:
     def show_transactions(self):
         self.clear_widgets()
 
-        self.cursor.execute("SELECT * FROM accounts WHERE user_id=?", (self.user_id,))
-        self.account = self.cursor.fetchone()
-        self.account_number = self.account[0]
-
-        self.cursor.execute("SELECT * FROM transactions WHERE account_number=?", (self.account_number,))
-        self.transactions = self.cursor.fetchall()
-
-        self.transaction_list = tk.Listbox(self.root, width=50)
-        self.transaction_list.pack()
-
-        for transaction in self.transactions:
-            self.transaction_list.insert(tk.END, "Částka: {} Kč, Datum: {}".format(transaction[1], transaction[2]))
+        self.cursor.execute("SELECT * FROM transactions WHERE account_number = ?", (self.account_number,))
+        transactions = self.cursor.fetchall()
+        
+        self.transactions_label = tk.Label(self.root, text="Transakce")
+        self.transactions_label.pack()
+         
+        for transaction in transactions:
+            self.transaction_label = tk.Label(self.root, text="Částka: {} Kč, Datum: {}".format(transaction[2], transaction[3]))
+            self.transaction_label.pack()
         
         self.back_button = tk.Button(self.root, text="Zpět", command=self.back_to_dashboard)
         self.back_button.pack()
@@ -286,60 +290,59 @@ class BankAccountApp:
             
     # funkce pro přihlášení obličejem uživatele do aplikace (přes knihovnu OpenCV)
     def face_login(self):
-        self.face_casecade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-        self.faces_folder = "faces/"
-        self.login_face_path = "login_faces/login_face.jpg"
+        face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+        recognizer = cv2.face.LBPHFaceRecognizer_create()
 
-        recognizer = self.face_recognizer()
+        def get_images_and_labels(path):
+            image_paths = [os.path.join(path, f) for f in os.listdir(path)]
+            face_samples = []
+            ids = []
+
+            for image_path in image_paths:
+                PIL_img = Image.open(image_path).convert('L')
+                img_numpy = np.array(PIL_img, 'uint8')
+                id = int(os.path.split(image_path)[-1].split('.')[0])
+                faces = face_cascade.detectMultiScale(img_numpy)
+                for (x, y, w, h) in faces:
+                    face_samples.append(img_numpy[y:y + h, x:x + w])
+                    ids.append(id)
+            return face_samples, ids
+
+        faces, ids = get_images_and_labels(self.faces_folder)
+        recognizer.train(faces, np.array(ids))
+
         cap = cv2.VideoCapture(0)
+
         while True:
             ret, frame = cap.read()
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_casecade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
-            for (x,y,w,h) in faces:
-                cv2.rectangle(frame, (x,y), (x+w, y+h), (0, 255, 0), 2)
-                roi_gray = gray[y:y+h, x:x+w]
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                roi_gray = gray[y:y + h, x:x + w]
                 cv2.imwrite(self.login_face_path, roi_gray)
                 user_id, confidence = recognizer.predict(roi_gray)
-                # get user id by matching the login face with the faces in the database
+
                 if confidence >= 45 and confidence <= 85:
                     self.cursor.execute("SELECT user_id, password, balance, username, account_number FROM accounts WHERE user_id=?", (user_id,))
                     account = self.cursor.fetchone()
                     self.conn.commit()
-                    self.show_dashboard(account)
-                    cap.release()
-                    cv2.destroyAllWindows()
-                    break
-
-                if cv2.waitKey(20) & 0xFF == ord('q'):
-                    self.cursor.execute("SELECT user_id, password, balance, username, account_number FROM accounts WHERE user_id=?", (user_id,))
-                    account = self.cursor.fetchone()
-                    self.conn.commit()
-                    self.show_dashboard(account)
-                    cap.release()
-                    cv2.destroyAllWindows()
-                    break
+                    if account:  # Add this check
+                        self.show_dashboard(account)
+                        cap.release()
+                        cv2.destroyAllWindows()
+                        break
+                    else:
+                        messagebox.showerror("Chyba", "Účet pro tohoto uživatele nebyl nalezen.")  # Show an error message if no account is found
 
             cv2.imshow("frame", frame)
-        
+
+            if cv2.waitKey(20) & 0xFF == ord('q'):
+                break
+
         cap.release()
-        
-    # porovnat obličej z kamery s obličejem v databázi
-    def get_images_and_labels(path):
-        image_paths = [os.path.join(path, f) for f in os.listdir(path)]
-        face_samples = []
-        ids = []
-    
-        for image_path in image_paths:
-            PIL_img = Image.open(image_path).convert('L')
-            img_numpy = np.array(PIL_img, 'uint8')
-            id = int(os.path.split(image_path)[-1].split('.')[1])
-            faces = self.face_casecade.detectMultiScale(img_numpy)
-            for (x,y,w,h) in faces:
-                face_samples.append(img_numpy[y:y+h, x:x+w])
-                ids.append(id)
-        return face_samples, ids
+        cv2.destroyAllWindows()
         
     def deposit(self):
         amount = self.amount_entry.get()
@@ -360,7 +363,6 @@ class BankAccountApp:
             self.conn.commit()
 
             messagebox.showinfo("Úspěch", "Vklad proběhl úspěšně.")
-            self.show_dashboard((self, self.user_id, self.balance))
         else:
             messagebox.showerror("Chyba", "Částka musí být číslo.")
         
@@ -378,9 +380,8 @@ class BankAccountApp:
                 self.balance -= amount
 
                 self.cursor.execute("UPDATE accounts SET balance=? WHERE user_id=?", (self.balance, self.user_id))
-                self.conn.commit()
-
                 self.cursor.execute("INSERT INTO transactions (amount, account_number) VALUES (?, ?)", (-amount, self.account_number))
+                
                 self.conn.commit()
 
                 messagebox.showinfo("Úspěch", "Výběr proběhl úspěšně.")
